@@ -378,6 +378,7 @@ def train(
     use_wandb:       bool  = True,
     live_plot:       bool  = True,
     output:          str   = "teacher_ppo.pt",
+    log_callback     = None,   # callable(ep, apples, entropy, value_loss, clip_frac)
 ):
     device     = get_device()
     batch_size = n_steps * n_envs                    # transitions per update
@@ -497,6 +498,9 @@ def train(
 
             if plot:
                 plot.update(total_ep, avg_apples, avg_ent, avg_loss, avg_clip)
+
+            if log_callback:
+                log_callback(total_ep, avg_apples, avg_ent, avg_loss, avg_clip)
 
     # ── final eval ────────────────────────────────────────────────────────────
     torch.save(model.state_dict(), output)

@@ -242,6 +242,7 @@ def train(
     use_wandb:    bool  = True,
     live_plot:    bool  = True,
     output:       str   = "teacher.pt",
+    log_callback  = None,   # callable(ep, apples, entropy, critic_loss, shaping_coef)
 ):
     device  = get_device()
     env1    = AppleGridEnv()
@@ -389,6 +390,9 @@ def train(
 
             if plot:
                 plot.update(ep_done, avg_apples, avg_ent, avg_crit, shp_coef)
+
+            if log_callback:
+                log_callback(ep_done, avg_apples, avg_ent, avg_crit, shp_coef)
 
     # ── final ─────────────────────────────────────────────────────────────────
     torch.save(model.state_dict(), output)
