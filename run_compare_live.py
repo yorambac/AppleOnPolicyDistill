@@ -75,8 +75,8 @@ def main():
     # ── baselines ─────────────────────────────────────────────────────────────
     print("Computing baselines…", flush=True)
     env = AppleGridEnv()
-    RAND   = random_baseline(env, 200)
-    ORACLE = oracle_baseline(env, 200)
+    RAND,   _ = random_baseline(env, 200)
+    ORACLE, _ = oracle_baseline(env, 200)
     print(f"  Random: {RAND:.2f}   Oracle: {ORACLE:.2f}\n")
 
     # ── build figure ──────────────────────────────────────────────────────────
