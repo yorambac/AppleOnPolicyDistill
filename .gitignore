@@ -1,0 +1,19 @@
+# Model weights
+*.pt
+
+# Generated outputs
+learning_curves.png
+
+# W&B local files
+wandb/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Claude Code local settings
+.claude/
+
+# macOS
+.DS_Store
