@@ -6,9 +6,15 @@ This is the *reverse* KL direction — the student's own state distribution
 drives training.  Rollouts are collected under the *student* policy, and the
 student is trained with PPO using an augmented reward:
 
-    r_aug(s, a) = r_env(s, a)  +  kl_coef · log p_teacher(a | s)
+    r_aug(s, a) = r_env(s, a)  +  kl_coef · [log p_teacher(a | s) − log(1/n_actions)]
 
 where a is sampled from the student and r_env is the sparse apple reward.
+
+The bonus log p_teacher(a|s) − log(1/n_actions) = log(n_actions · p_teacher(a|s)) is
+*centred* around zero: random actions yield ≈ 0, teacher-preferred actions yield a
+positive bonus (up to log(n_actions) ≈ 1.4 nats), and teacher-disfavoured actions
+yield a negative bonus.  Without this baseline, log p_teacher is always ≤ 0 for a
+deterministic teacher, giving only penalties and no positive learning signal.
 
 Interpretation
 ──────────────
@@ -33,6 +39,7 @@ Saves the final student to student_rl.pt by default.
 """
 
 import argparse
+import math
 import time
 
 import numpy as np
@@ -155,8 +162,13 @@ def collect_rollout(
         acts         = dist.sample()
         logps        = dist.log_prob(acts)
 
-        # KL bonus: log p_teacher(a_student | s)  — shape [n_envs]
-        kl_bonus = teacher_log_probs.gather(1, acts.unsqueeze(1)).squeeze(1)
+        # KL bonus: log p_teacher(a_student | s) − log(1/n_actions)
+        # Centred so random actions → 0, teacher-preferred → positive,
+        # teacher-disfavoured → negative.  Without this baseline the bonus
+        # is always ≤ 0 and only penalises the student.
+        n_actions = teacher_log_probs.shape[-1]
+        log_uniform = math.log(1.0 / n_actions)          # ≈ −1.386 for 4 actions
+        kl_bonus = teacher_log_probs.gather(1, acts.unsqueeze(1)).squeeze(1) - log_uniform
 
         obs_buf[t]     = obs
         act_buf[t]     = acts.cpu().numpy()
@@ -286,8 +298,8 @@ def train_student_rl(
     entropy_coef:    float = 0.01,
     value_coef:      float = 0.5,
     max_grad_norm:   float = 0.5,
-    kl_coef:         float = 0.1,   # weight on log p_teacher(a|s) bonus
-    eval_every:      int   = 20,    # evaluate student every N PPO updates
+    kl_coef:         float = 0.02,  # weight on centred log-likelihood-ratio bonus
+    eval_every:      int   = 10,    # evaluate student every N PPO updates
     teacher_path:    str   = "teacher.pt",
     output_path:     str   = "student_rl.pt",
     log_callback           = None,  # callable(env_steps, student_rew, avg_kl_bonus, entropy)
@@ -410,8 +422,8 @@ if __name__ == "__main__":
     p.add_argument("--epochs",    type=int,   default=1,
                    help="PPO re-use epochs per rollout (1 = matches logit distill compute)")
     p.add_argument("--lr",        type=float, default=1e-3)
-    p.add_argument("--kl-coef",   type=float, default=0.1,
-                   help="Weight on log p_teacher(a|s) reward bonus")
+    p.add_argument("--kl-coef",   type=float, default=0.02,
+                   help="Weight on centred log-likelihood-ratio reward bonus")
     p.add_argument("--teacher",   type=str,   default="teacher.pt")
     p.add_argument("--output",    type=str,   default="student_rl.pt")
     args = p.parse_args()

@@ -75,7 +75,7 @@ def main():
                         " (100 updates × 128 steps × 16 envs ≈ 200K steps,"
                         " comparable to logit's 200 iters × 640 steps = 128K)")
     p.add_argument("--envs",         type=int,   default=16)
-    p.add_argument("--kl-coef",      type=float, default=0.1,
+    p.add_argument("--kl-coef",      type=float, default=0.02,
                    help="KL bonus weight for RL distillation")
     p.add_argument("--no-save",      action="store_true",
                    help="Do not save student weights")
