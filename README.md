@@ -209,7 +209,7 @@ Trains `TeacherNet` with Proximal Policy Optimisation.
 | `--timesteps N` | 2500000 | Total env steps |
 | `--envs N` | 16 | Parallel environments |
 | `--steps N` | 128 | Rollout length per env |
-| `--epochs N` | 4 | PPO re-use epochs |
+| `--epochs N` | 1 | PPO re-use epochs |
 | `--lr LR` | 3e-4 | Adam learning rate |
 | `--clip F` | 0.2 | Clip epsilon |
 | `--no-wandb` | off | Disable W&B logging |
@@ -291,7 +291,7 @@ at the end for compatibility with `compare.py` and `visualize_student.py`.
 | `n_updates` | 500 | PPO gradient steps |
 | `n_envs` | 16 | Parallel environments |
 | `n_steps` | 128 | Rollout length per env |
-| `n_epochs` | 4 | PPO re-use epochs |
+| `n_epochs` | 1 | PPO re-use epochs (1 keeps wall-clock on par with logit distill) |
 | `lr` | 1e-3 | Adam learning rate |
 | `kl_coef` | 0.1 | Weight on log p_teacher bonus |
 | `clip_eps` | 0.2 | PPO clip epsilon |
@@ -307,7 +307,7 @@ at the end for compatibility with `compare.py` and `visualize_student.py`.
 | `--kl-coef F` | 0.1 | KL bonus weight |
 | `--envs N` | 16 | Parallel environments |
 | `--steps N` | 128 | Rollout length per env |
-| `--epochs N` | 4 | PPO re-use epochs |
+| `--epochs N` | 1 | PPO re-use epochs |
 | `--lr LR` | 1e-3 | Adam learning rate |
 
 ---

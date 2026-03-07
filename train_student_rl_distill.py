@@ -277,7 +277,7 @@ def train_student_rl(
     n_updates:       int   = 500,
     n_envs:          int   = 16,
     n_steps:         int   = 128,
-    n_epochs:        int   = 4,
+    n_epochs:        int   = 1,   # 1 pass per rollout keeps wall-clock on par with logit distill
     mini_batch_size: int   = 256,
     gamma:           float = 0.99,
     gae_lambda:      float = 0.95,
@@ -407,8 +407,8 @@ if __name__ == "__main__":
     p.add_argument("--envs",      type=int,   default=16)
     p.add_argument("--steps",     type=int,   default=128,
                    help="Rollout length per env")
-    p.add_argument("--epochs",    type=int,   default=4,
-                   help="PPO re-use epochs per rollout")
+    p.add_argument("--epochs",    type=int,   default=1,
+                   help="PPO re-use epochs per rollout (1 = matches logit distill compute)")
     p.add_argument("--lr",        type=float, default=1e-3)
     p.add_argument("--kl-coef",   type=float, default=0.1,
                    help="Weight on log p_teacher(a|s) reward bonus")
