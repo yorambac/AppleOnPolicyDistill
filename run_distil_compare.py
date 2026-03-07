@@ -26,6 +26,7 @@ Usage:
 """
 
 import argparse
+import torch
 import numpy as np
 import matplotlib
 matplotlib.use("MacOSX")
@@ -33,8 +34,9 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 from grid_env import AppleGridEnv
+from models   import TeacherNet
 from compare  import random_baseline, oracle_baseline
-from train_student_logit_distill import train_student
+from train_student_logit_distill import train_student, evaluate_stochastic, get_device
 from train_student_rl_distill    import train_student_rl
 
 # ── palette ───────────────────────────────────────────────────────────────────
@@ -65,8 +67,10 @@ def main():
                    help="Pre-trained teacher weights to distil from")
     p.add_argument("--logit-iters",  type=int,   default=200,
                    help="Iterations for logit (forward-KL) distillation")
-    p.add_argument("--rl-updates",   type=int,   default=500,
-                   help="PPO updates for RL (reverse-KL) distillation")
+    p.add_argument("--rl-updates",   type=int,   default=100,
+                   help="PPO updates for RL (reverse-KL) distillation"
+                        " (100 updates × 128 steps × 16 envs ≈ 200K steps,"
+                        " comparable to logit's 200 iters × 640 steps = 128K)")
     p.add_argument("--envs",         type=int,   default=16)
     p.add_argument("--kl-coef",      type=float, default=0.1,
                    help="KL bonus weight for RL distillation")
@@ -74,12 +78,20 @@ def main():
                    help="Do not save student weights")
     args = p.parse_args()
 
-    # ── baselines ─────────────────────────────────────────────────────────────
-    print("Computing baselines…", flush=True)
-    env = AppleGridEnv()
+    # ── baselines + teacher eval ──────────────────────────────────────────────
+    print("Computing baselines and teacher performance…", flush=True)
+    env    = AppleGridEnv()
+    device = get_device()
     RAND,   _ = random_baseline(env, 200)
     ORACLE, _ = oracle_baseline(env, 200)
-    print(f"  Random: {RAND:.2f}   Oracle: {ORACLE:.2f}\n")
+
+    teacher_model = TeacherNet(env.obs_size, env.n_actions).to(device)
+    teacher_model.load_state_dict(
+        torch.load(args.teacher, map_location=device, weights_only=True)
+    )
+    teacher_model.eval()
+    TEACHER = evaluate_stochastic(teacher_model, env, device, n_episodes=50)
+    print(f"  Random: {RAND:.2f}   Teacher: {TEACHER:.2f}   Oracle: {ORACLE:.2f}\n")
 
     # ── figure ────────────────────────────────────────────────────────────────
     plt.ion()
@@ -110,11 +122,14 @@ def main():
     ax_r_kl.set_title( "RL Distill  —  KL Bonus  (higher = teacher agrees)",
                         color=C_RL, fontsize=10, fontweight="bold")
 
+    C_TEACHER = "#e3b341"   # gold — teacher reference
     for ax in [ax_l_rew, ax_r_rew]:
-        ax.axhline(RAND,   color=C_RAND,   lw=1.2, ls="--", alpha=0.8,
-                   label=f"Random  {RAND:.1f}")
-        ax.axhline(ORACLE, color=C_ORACLE, lw=1.2, ls="--", alpha=0.8,
-                   label=f"Oracle  {ORACLE:.1f}")
+        ax.axhline(RAND,    color=C_RAND,    lw=1.2, ls="--", alpha=0.8,
+                   label=f"Random   {RAND:.1f}")
+        ax.axhline(TEACHER, color=C_TEACHER, lw=1.5, ls="-.",  alpha=0.9,
+                   label=f"Teacher  {TEACHER:.1f}")
+        ax.axhline(ORACLE,  color=C_ORACLE,  lw=1.2, ls="--", alpha=0.8,
+                   label=f"Oracle   {ORACLE:.1f}")
         ax.set_ylabel("Apples / ep", color=C_TICK, fontsize=8)
         ax.set_ylim(0, ORACLE * 1.08)
         ax.legend(fontsize=8, facecolor=BG_PANEL, edgecolor=C_BORDER, labelcolor="white")
@@ -229,11 +244,12 @@ def main():
     print("\n" + "━" * 55)
     print("  Distillation Comparison Summary")
     print("━" * 55)
-    print(f"  Teacher (from {args.teacher})")
-    print(f"  Random baseline        : {RAND:.2f}")
-    print(f"  Oracle baseline        : {ORACLE:.2f}")
-    print(f"  Logit distill (fwd KL) : {final_logit:.2f} apples/ep")
-    print(f"  RL distill    (rev KL) : {final_rl:.2f} apples/ep")
+    gap = ORACLE - RAND
+    print(f"  Teacher  ({args.teacher}) : {TEACHER:.2f}  ({100*(TEACHER-RAND)/gap:.0f}% of oracle gap)")
+    print(f"  Random baseline          : {RAND:.2f}")
+    print(f"  Oracle baseline          : {ORACLE:.2f}")
+    print(f"  Logit distill (fwd KL)   : {final_logit:.2f}  ({100*(final_logit-RAND)/gap:.0f}% of oracle gap)")
+    print(f"  RL distill    (rev KL)   : {final_rl:.2f}  ({100*(final_rl-RAND)/gap:.0f}% of oracle gap)")
     print("━" * 55)
 
     print("\nAll done.  Close the window to exit.")
