@@ -17,6 +17,9 @@ Usage:
   python run_compare_live.py --no-wandb
 """
 
+import os
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import argparse
 import numpy as np
 import matplotlib

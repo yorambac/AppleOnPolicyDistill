@@ -25,6 +25,9 @@ Usage:
   python run_distil_compare.py --no-save   # skip saving weights
 """
 
+import os
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import argparse
 import torch
 import numpy as np
