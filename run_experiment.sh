@@ -32,7 +32,7 @@ if [ ! -f teacher.pt ]; then
     echo "Error: teacher.pt not found after training step." >&2
     exit 1
 fi
-"$PYTHON" train_student.py
+"$PYTHON" train_student_logit_distill.py
 
 # ── Step 3: visualise ──────────────────────────────────────────────────────────
 echo ""

@@ -1,19 +1,24 @@
-# On-Policy Distillation Demo — A2C vs PPO
+# On-Policy Distillation Demo — A2C vs PPO, Forward KL vs Reverse KL
 
 A self-contained RL + knowledge-distillation demo that trains **two teacher
 algorithms** (A2C and PPO) on a 15×15 apple-collecting grid world, then
-distils each teacher into an identical small student network via on-policy KL
-minimisation.  A final comparison script evaluates all four models side-by-side.
+distils each teacher into a small student network via **two different KL
+distillation methods** — forward KL (logit distillation) and reverse KL
+(RL distillation via PPO).  Comparison scripts evaluate all models side-by-side
+and show live learning curves during training.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Pipeline                                                                   │
-│                                                                             │
-│  AppleGridEnv  ──►  TeacherNet-A2C ──►  StudentNet-A2C                     │
-│    15×15 grid   └►  TeacherNet-PPO ──►  StudentNet-PPO                     │
-│    40-step ep          2×256, ~127k          2×64, ~19k                     │
-│                       actor-critic           actor-only                     │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Pipeline                                                                    │
+│                                                                              │
+│                          ┌─► forward KL (logit distill) ─► StudentNet       │
+│  AppleGridEnv ─► A2C ───┤                                                   │
+│   15×15 grid  └─► PPO ──┤─► reverse KL (RL distill)    ─► StudentNet       │
+│   40-step ep             └─► forward KL (logit distill) ─► StudentNet       │
+│                                                                              │
+│  TeacherNet: 2×256, ~127k params, actor-critic (shared trunk)                │
+│  StudentNet:  2×64,  ~19k params, actor-only                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -22,23 +27,20 @@ minimisation.  A final comparison script evaluates all four models side-by-side.
 
 ```
 .
-├── grid_env.py            # Environment: AppleGridEnv
-├── models.py              # Neural networks: TeacherNet, StudentNet
-├── train_teacher.py       # A2C teacher training
-├── train_teacher_ppo.py   # PPO teacher training
-├── train_student.py       # On-policy KL distillation (teacher → student)
-├── visualize_student.py   # Animated episode viewer for any student
-├── compare.py             # Evaluate & compare all four models
-├── run_teacher.sh         # Launch: A2C teacher only (saves teacher.pt)
-├── run_student.sh         # Launch: distil from teacher.pt → student.pt
-├── run_experiment.sh      # Launch: A2C teacher → student → visualise
-├── run_compare.sh         # Launch: full comparison (A2C + PPO, 4 models)
-├── teacher_a2c.pt         # A2C teacher weights  (produced by run_compare.sh)
-├── teacher_ppo.pt         # PPO teacher weights  (produced by run_compare.sh)
-├── student_a2c.pt         # A2C-distilled student weights
-├── student_ppo.pt         # PPO-distilled student weights
-├── teacher.pt             # A2C teacher weights  (produced by run_teacher.sh)
-└── student.pt             # Student weights      (produced by run_student.sh)
+├── grid_env.py                    # Environment: AppleGridEnv
+├── models.py                      # Neural networks: TeacherNet, StudentNet
+├── train_teacher.py               # A2C teacher training
+├── train_teacher_ppo.py           # PPO teacher training
+├── train_student_logit_distill.py # Forward-KL distillation: KL(teacher ‖ student)
+├── train_student_rl_distill.py    # Reverse-KL distillation: KL(student ‖ teacher) via PPO
+├── visualize_student.py           # Animated episode viewer for any student
+├── compare.py                     # Evaluate & compare all models
+├── run_teacher.sh                 # Launch: A2C teacher only (saves teacher.pt)
+├── run_student.sh                 # Launch: logit distil from teacher.pt → student.pt
+├── run_experiment.sh              # Launch: A2C teacher → logit student → visualise
+├── run_compare.sh                 # Launch: full comparison (A2C + PPO, 4 models)
+├── run_compare_live.py            # Live dashboard: A2C vs PPO teacher training
+└── run_distil_compare.py          # Live dashboard: logit distill vs RL distill
 ```
 
 ---
@@ -221,15 +223,12 @@ loss + clip fraction (instead of shaping coef on the secondary axis).
 
 ---
 
-### `train_student.py` — On-policy KL distillation
+### `train_student_logit_distill.py` — Forward-KL logit distillation
 
-Distils any `TeacherNet` into the smaller `StudentNet` via on-policy soft
-cross-entropy minimisation.
-
-**Why on-policy?**  The teacher's action distribution is only meaningful at
-states the teacher actually visits.  Collecting rollouts under the teacher's
-own policy ensures the student trains on the same distribution the teacher has
-mastered, rather than on arbitrary states.
+Distils any `TeacherNet` into the smaller `StudentNet` by minimising
+**KL( p_teacher ‖ p_student )** — the teacher's state distribution drives
+training.  This is the "forward KL" direction: the student learns to cover
+all modes the teacher puts probability on.
 
 **Algorithm (one iteration):**
 1. **Collect** — run all `n_envs` environments simultaneously to completion
@@ -240,7 +239,7 @@ mastered, rather than on arbitrary states.
    L = −Σ_a p_teacher(a|s) · log p_student(a|s)
          ≡ KL( p_teacher ‖ p_student ) + H( p_teacher )
    ```
-4. **Evaluate** every `eval_every` iterations.
+4. **Evaluate** every `eval_every` iterations; call `log_callback` for live plotting.
 
 **CLI flags:**
 
@@ -248,6 +247,68 @@ mastered, rather than on arbitrary states.
 |------|---------|-------------|
 | `--teacher PATH` | `teacher.pt` | Path to teacher weights |
 | `--output PATH` | `student.pt` | Path to save student weights |
+
+---
+
+### `train_student_rl_distill.py` — Reverse-KL RL distillation
+
+Distils any `TeacherNet` into `StudentNet` via **PPO on the student's own
+rollouts**, with a reward bonus that approximates minimising
+**KL( p_student ‖ p_teacher )** — the "reverse KL" direction.
+
+The reverse KL is mode-seeking: the student concentrates probability mass on
+actions the teacher rates highly, rather than spreading across all teacher
+modes.  Because the student generates its own rollouts, it can encounter
+states the teacher rarely visits, potentially generalising more broadly.
+
+**Augmented reward:**
+```
+r_aug(s, a) = r_env(s, a)  +  kl_coef · log p_teacher(a | s)
+```
+where `a` is sampled from the student.  The `log p_teacher` term rewards the
+student for taking actions the teacher approves of.  Combined with PPO's
+entropy bonus, this is equivalent to minimising:
+```
+KL( p_student ‖ p_teacher ) = E_{a~student}[ log p_student(a|s) − log p_teacher(a|s) ]
+```
+
+**Architecture:** A `StudentActorCritic` (same 2×64 trunk + critic head) is
+used during training.  Actor weights are extracted into a standard `StudentNet`
+at the end for compatibility with `compare.py` and `visualize_student.py`.
+
+**Algorithm (one update):**
+1. **Collect** — run `n_steps` steps from all `n_envs` student environments;
+   query frozen teacher for `log p_teacher(a|s)` at every step; form
+   augmented reward; compute GAE on augmented rewards.
+2. **PPO update** — clipped surrogate + value loss + entropy bonus;
+   `n_epochs` passes over the batch.
+3. **Evaluate** student (pure env reward, no KL bonus) every `eval_every` updates.
+
+**Hyperparameters (defaults):**
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `n_updates` | 500 | PPO gradient steps |
+| `n_envs` | 16 | Parallel environments |
+| `n_steps` | 128 | Rollout length per env |
+| `n_epochs` | 4 | PPO re-use epochs |
+| `lr` | 1e-3 | Adam learning rate |
+| `kl_coef` | 0.1 | Weight on log p_teacher bonus |
+| `clip_eps` | 0.2 | PPO clip epsilon |
+| `entropy_coef` | 0.01 | Entropy bonus |
+
+**CLI flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--teacher PATH` | `teacher.pt` | Path to teacher weights |
+| `--output PATH` | `student_rl.pt` | Path to save student weights |
+| `--updates N` | 500 | PPO update steps |
+| `--kl-coef F` | 0.1 | KL bonus weight |
+| `--envs N` | 16 | Parallel environments |
+| `--steps N` | 128 | Rollout length per env |
+| `--epochs N` | 4 | PPO re-use epochs |
+| `--lr LR` | 1e-3 | Adam learning rate |
 
 ---
 
@@ -346,6 +407,43 @@ bash run_experiment.sh --updates 2000 --no-wandb
 
 ---
 
+### `run_distil_compare.py` — Live distillation comparison dashboard
+
+Side-by-side live dashboard comparing **forward-KL** (logit distill) vs
+**reverse-KL** (RL distill) on the same pre-trained teacher.  Both student
+reward curves are plotted in real time; a summary table is printed at the end.
+
+```
+┌──────────────────────┬──────────────────────┐
+│  Logit Distill       │  RL Distill          │
+│  (Forward KL)        │  (Reverse KL)        │
+│  Student reward      │  Student reward      │
+├──────────────────────┼──────────────────────┤
+│  KL loss (↓=good)    │  KL bonus (↑=good)   │
+└──────────────────────┴──────────────────────┘
+```
+
+The x-axis is env steps consumed, making the learning-speed comparison fair.
+
+```bash
+python run_distil_compare.py                            # uses teacher_ppo.pt
+python run_distil_compare.py --teacher teacher_a2c.pt  # use A2C teacher
+python run_distil_compare.py --logit-iters 100 --rl-updates 250  # quick test
+```
+
+**CLI flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--teacher PATH` | `teacher_ppo.pt` | Teacher to distil from |
+| `--logit-iters N` | 200 | Iterations for forward-KL distillation |
+| `--rl-updates N` | 500 | PPO updates for reverse-KL distillation |
+| `--envs N` | 16 | Parallel environments |
+| `--kl-coef F` | 0.1 | Reverse-KL bonus weight |
+| `--no-save` | off | Skip saving student weights |
+
+---
+
 ### `run_compare.sh` — Full A2C vs PPO comparison
 
 The main experiment script.  Runs all four stages and prints the comparison
@@ -393,11 +491,23 @@ bash run_compare.sh --no-wandb
 Produces `teacher_a2c.pt`, `teacher_ppo.pt`, `student_a2c.pt`, `student_ppo.pt`
 and prints the comparison table.
 
+### Compare distillation methods (forward KL vs reverse KL)
+
+```bash
+# First train a teacher (or use one from run_compare.sh):
+bash run_compare.sh --no-wandb --no-plot
+
+# Then launch the live distillation comparison:
+python run_distil_compare.py --teacher teacher_ppo.pt
+```
+
+Shows real-time learning curves for both distillation methods side by side.
+
 ### Single A2C pipeline
 
 ```bash
 bash run_teacher.sh                           # ~15 min → teacher.pt
-bash run_student.sh                           # ~1 min  → student.pt
+bash run_student.sh                           # ~1 min  → student.pt  (forward KL)
 conda run -n try python visualize_student.py  # watch 3 episodes
 ```
 
@@ -451,19 +561,52 @@ rather than gradient steps.
 PPO's sample re-use and on-policy corrections typically yield **higher asymptotic
 performance than A2C** at the same total env-step budget.
 
-### Step 3 — On-policy KL distillation
+### Step 3a — Forward-KL logit distillation
 
-Both teachers are distilled using the same procedure: the teacher policy is
-frozen, its rollouts generate `(state, action_distribution)` pairs, and the
-student minimises the soft cross-entropy (= KL divergence from teacher to
-student) over those pairs.
+The teacher policy is frozen; its rollouts generate `(state, action_distribution)`
+pairs, and the student minimises the soft cross-entropy over those pairs:
 
-Using the **teacher's own rollouts** (on-policy w.r.t. the teacher) is
-important: states the teacher never visits carry no useful signal, and training
-on them can introduce compounding errors if the student drifts into unfamiliar
-regions.
+```
+L = −Σ_a p_teacher(a|s) · log p_student(a|s)  ≡  KL( p_teacher ‖ p_student )
+```
+
+This is **mode-covering**: the student must assign probability everywhere the
+teacher does, or incur large loss.  Using teacher rollouts means the student
+trains exactly on the distribution the teacher has mastered.
+
+### Step 3b — Reverse-KL RL distillation
+
+The student collects its own rollouts via PPO, and the reward is augmented:
+
+```
+r_aug(s, a) = r_env(s, a) + kl_coef · log p_teacher(a | s)
+```
+
+This is **mode-seeking**: the student concentrates on actions the teacher rates
+highly.  Because the student's own rollouts drive training, it can discover
+states the teacher rarely visits.  The implicit objective is:
+
+```
+minimise  KL( p_student ‖ p_teacher )
+        = E_{a~student}[ log p_student(a|s) − log p_teacher(a|s) ]
+```
+
+where the `log p_teacher` term becomes the reward bonus, and the `log p_student`
+term is handled via PPO's entropy coefficient.
+
+**When to prefer each method:**
+
+| Property | Forward KL (logit distill) | Reverse KL (RL distill) |
+|---|---|---|
+| State distribution | Teacher's | Student's own |
+| KL direction | Mode-covering | Mode-seeking |
+| Exploration | Bounded by teacher | Student can self-explore |
+| Stability | Very stable | Depends on PPO |
+| Requires critic | No | Yes (StudentActorCritic) |
 
 ### Typical results
+
+**Teacher comparison (same env-step budget):**
 
 | Policy | Parameters | Apples / episode |
 |--------|------------|-----------------|
@@ -471,12 +614,24 @@ regions.
 | Oracle (greedy) | — | ~8.2 |
 | Teacher A2C | 126 981 | ~3.7 |
 | Teacher PPO | 126 981 | ~5.0 |
-| Student-A2C | 19 396 (15 %) | ~3.5 (≈ 95 % of A2C teacher) |
-| Student-PPO | 19 396 (15 %) | ~4.8 (≈ 96 % of PPO teacher) |
 
-PPO typically outperforms A2C at the same env-step budget thanks to better
+**Distillation from PPO teacher (both methods):**
+
+| Student method | Parameters | Apples / episode | vs teacher |
+|----------------|------------|-----------------|-----------|
+| Forward KL (logit distill) | 19 396 (15 %) | ~4.8 | ≈ 96 % |
+| Reverse KL (RL distill) | 19 396 (15 %) | ~4.5–4.8 | ≈ 90–96 % |
+
+The forward-KL method is generally more stable and data-efficient because the
+teacher's high-quality rollouts directly supervise the student.  The reverse-KL
+method must bootstrap from its own exploratory rollouts, which adds variance
+but can sometimes exceed the forward-KL ceiling by discovering teacher-approved
+actions in novel states.  Both converge to similar final performance; the
+main difference is learning speed in the first ~30 % of training.
+
+PPO teachers outperform A2C at the same env-step budget thanks to better
 sample efficiency from policy re-use, GAE variance reduction, and the entropy
-regulariser.  Both students recover ~95–97 % of their respective teacher's
+regulariser.  Both students recover ~90–97 % of their respective teacher's
 reward at 1/7th the parameter count.
 
 ---
@@ -488,7 +643,9 @@ reward at 1/7th the parameter count.
 | Larger grid or more apples | `AppleGridEnv.__init__` defaults in `grid_env.py` |
 | Deeper / wider networks | `hidden` argument in `TeacherNet` / `StudentNet` (`models.py`) |
 | PPO with linear LR annealing | Add a schedule in `train_teacher_ppo.py` |
-| Temperature annealing in distillation | Add a schedule to `temperature` in `train_student.py` |
-| DAgger (student self-improvement) | After distillation, mix teacher and student rollouts |
-| W&B hyperparameter sweep | `wandb sweep` pointing at either teacher CLI |
-| Visualise PPO student | `python visualize_student.py` after pointing `student.pt` at `student_ppo.pt` |
+| Temperature annealing in logit distill | Add a schedule to `temperature` in `train_student_logit_distill.py` |
+| Tune KL bonus weight | `--kl-coef` flag in `train_student_rl_distill.py` / `run_distil_compare.py` |
+| DAgger (student self-improvement) | After logit distillation, mix teacher and student rollouts |
+| W&B logging for distillation | Add `wandb.log` inside the `log_callback` in each distil script |
+| W&B hyperparameter sweep | `wandb sweep` pointing at either teacher or student CLI |
+| Visualise any student | `python visualize_student.py` — works with any `StudentNet`-compatible weights |

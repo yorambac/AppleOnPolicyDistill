@@ -27,7 +27,7 @@ import matplotlib.gridspec as gridspec
 from grid_env import AppleGridEnv
 from train_teacher     import train as train_a2c
 from train_teacher_ppo import train as train_ppo
-from train_student     import train_student
+from train_student_logit_distill import train_student
 from compare           import random_baseline, oracle_baseline
 
 # ── palette ───────────────────────────────────────────────────────────────────

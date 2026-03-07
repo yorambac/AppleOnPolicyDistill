@@ -87,7 +87,7 @@ echo "║  Step 3 / 4  —  Student distillation             ║"
 echo "╚══════════════════════════════════════════════════╝"
 
 echo "--- Distilling A2C student ---"
-"$PYTHON" train_student.py --teacher teacher_a2c.pt --output student_a2c.pt
+"$PYTHON" train_student_logit_distill.py --teacher teacher_a2c.pt --output student_a2c.pt
 
 if [ ! -f student_a2c.pt ]; then
     echo "Error: student_a2c.pt not produced." >&2; exit 1
@@ -95,7 +95,7 @@ fi
 
 echo ""
 echo "--- Distilling PPO student ---"
-"$PYTHON" train_student.py --teacher teacher_ppo.pt --output student_ppo.pt
+"$PYTHON" train_student_logit_distill.py --teacher teacher_ppo.pt --output student_ppo.pt
 
 if [ ! -f student_ppo.pt ]; then
     echo "Error: student_ppo.pt not produced." >&2; exit 1

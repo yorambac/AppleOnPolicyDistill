@@ -1,14 +1,18 @@
 """
-On-policy distillation: train a smaller StudentNet to mimic TeacherNet.
+Forward-KL logit distillation: train StudentNet to mimic TeacherNet.
+
+This is the *forward* KL direction: KL( p_teacher ‖ p_student ).
+The teacher's state distribution drives training — rollouts are collected
+under the *teacher* policy and the student minimises surprise at what
+the teacher does.
 
 Algorithm (each iteration)
 ──────────────────────────
-1. Roll out the *teacher* policy for `rollouts_per_iter` full episodes,
+1. Roll out the *teacher* policy for `n_envs` full episodes simultaneously,
    collecting (observation, teacher_softmax_probs) pairs at every step.
-   This is the "on-policy" part – the state distribution comes from the
-   teacher's own behaviour.
+   This is "on-policy w.r.t. the teacher" — state distribution = teacher's.
 
-2. Update the student by minimising the KL divergence
+2. Update the student by minimising the forward KL divergence
        KL( p_teacher ‖ p_student )
      = Σ_a p_teacher(a|s) log[ p_teacher(a|s) / p_student(a|s) ]
      = CE( p_teacher, p_student ) − H( p_teacher )
@@ -17,7 +21,11 @@ Algorithm (each iteration)
    equivalent to the soft cross-entropy loss:
        L = − Σ_a p_teacher(a|s) · log p_student(a|s)
 
-3. Every iteration: print KL loss + teacher/student reward.
+3. Every `eval_every` iterations: evaluate student reward and log.
+
+Contrast with train_student_rl_distill.py which uses the *reverse* KL
+direction — KL( p_student ‖ p_teacher ) — via PPO on the student's own
+rollouts with a teacher-approval reward bonus.
 
 Speed: rollouts use a batched VecEnv so the GPU does one forward pass
        per step across all parallel envs.
@@ -138,6 +146,7 @@ def train_student(
     eval_every:        int   = 10,    # evaluate student every N iters
     teacher_path:      str   = "teacher.pt",
     output_path:       str   = "student.pt",
+    log_callback             = None,  # callable(env_steps, kl_loss, teacher_rew, student_rew)
 ):
     device = get_device()
     print(f"Device : {device}  |  parallel envs : {n_envs}\n")
@@ -203,16 +212,18 @@ def train_student(
             n_batches  += 1
 
         # ── 3. log ────────────────────────────────────────────────────────────
+        env_steps = it * n_envs * env.episode_length   # approx teacher steps
         if it % eval_every == 0:
             student_rew = evaluate_stochastic(student, env, device, n_episodes=20)
             gap         = teacher_rew - student_rew
             elapsed     = time.time() - t0
-            steps_done  = it * n_envs * env.episode_length  # approx
             print(
                 f"{it:>5} | {total_loss/n_batches:>8.4f} | "
                 f"{teacher_rew:>9.2f} | {student_rew:>8.2f} | "
                 f"{gap:>+7.2f} | {elapsed:>7.1f}s"
             )
+            if log_callback:
+                log_callback(env_steps, total_loss / n_batches, teacher_rew, student_rew)
         else:
             # lightweight per-iter print (no eval)
             elapsed = time.time() - t0

@@ -21,4 +21,4 @@ if [ ! -f teacher.pt ]; then
 fi
 
 echo "=== Student distillation ==="
-"$PYTHON" train_student.py "$@"
+"$PYTHON" train_student_logit_distill.py "$@"
